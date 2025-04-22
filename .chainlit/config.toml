@@ -89,3 +89,4 @@ cot = "full"
 
 [meta]
 generated_by = "2.3.0"
+custom_css = '/public/stylesheet.css'
