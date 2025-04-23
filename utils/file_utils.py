@@ -1,35 +1,35 @@
 import os
 import shutil
 import hashlib
-from typing import List, Optional
+from typing import List
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 import chainlit as cl
 import tempfile
+from chromadb.config import Settings
 
-# Cấu hình chunking tối ưu
+# config chunking
 OPTIMAL_CHUNK_SIZE = 800
 CHUNK_OVERLAP = 150
 CV_UPLOAD_DIR = "./data/uploaded_cvs"
 CV_VECTOR_DB_DIR = "./data/cvs"
 
 def get_file_hash(file_path: str) -> str:
-    """Tạo hash để nhận diện file"""
     with open(file_path, "rb") as f:
         return hashlib.md5(f.read()).hexdigest()
 
 async def process_uploaded_files(files: List[cl.File]) -> bool:
+    if len(files) == 0: 
+        return False
     """Xử lý và lưu trữ CV"""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=OPTIMAL_CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP
     )
-    
     all_docs = []
-    temp_files = []  # Theo dõi các file tạm
-    
+    temp_files = []
     try:
         for file in files:
             temp_path = None
@@ -71,19 +71,10 @@ async def process_uploaded_files(files: List[cl.File]) -> bool:
         if not all_docs:
             await cl.Message(content="No valid CVs were processed!").send()
             return False
-        
-        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        # Tạo vector store
-        vectorstore = Chroma.from_documents(
-            documents=all_docs,
-            embedding=embeddings,
-            persist_directory=CV_VECTOR_DB_DIR,
-            collection_metadata={"hnsw:space": "cosine"}
-        )
         return True
         
     finally:
-        # Dọn dẹp file tạm
+        # clean temp file
         for temp_path in temp_files:
             try:
                 if os.path.exists(temp_path):
@@ -100,25 +91,19 @@ async def delete_cv_file(filename: str):
     # Xóa và tạo lại vector store với các file còn lại
     await rebuild_vector_store()
 
-async def clear_all_cvs():
-    """Xóa toàn bộ CV"""
-    shutil.rmtree("./data/uploaded_cvs")
-    os.makedirs("./data/uploaded_cvs", exist_ok=True)
-    shutil.rmtree("./data/cvs")  # Xóa cả vector store
-    os.makedirs("./data/cvs", exist_ok=True)
-
 async def rebuild_vector_store():
-    """Xây dựng lại vector store từ các file hiện có"""
+    os.makedirs("./data/uploaded_cvs", exist_ok=True)
+    os.makedirs(CV_VECTOR_DB_DIR, exist_ok=True)
+    os.chmod("./data/uploaded_cvs", 0o777)
+    os.chmod(CV_VECTOR_DB_DIR, 0o777)
+    cv_list = get_uploaded_cvs()
     try:
-        cv_list = get_uploaded_cvs()
         if not cv_list:
             return None
-            
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=OPTIMAL_CHUNK_SIZE,
             chunk_overlap=CHUNK_OVERLAP
         )
-        
         all_docs = []
         for cv in cv_list:
             loader = PyPDFLoader(f"./data/uploaded_cvs/{cv}")
@@ -129,12 +114,10 @@ async def rebuild_vector_store():
                     "page": page.metadata.get("page", 0) + 1
                 })
             all_docs.extend(pages)
-        
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
         vectorstore = Chroma.from_documents(
             documents=all_docs,
-            embedding=embeddings,
-            persist_directory="./data/cvs"
+            embedding=embeddings
         )
         return vectorstore
         
@@ -147,3 +130,16 @@ def get_uploaded_cvs() -> List[str]:
     if os.path.exists("./data/uploaded_cvs"):
         return sorted([f for f in os.listdir("./data/uploaded_cvs") if f.lower().endswith(".pdf")])
     return []
+
+async def clear_all_cvs():
+    """Xóa toàn bộ CV"""
+    shutil.rmtree("./data/cvs", ignore_errors=True)
+    os.makedirs("./data/cvs", exist_ok=True)
+    os.chmod("./data/cvs", 0o777)
+
+async def clear_all_data():
+    """Xóa toàn bộ CV"""
+    await clear_all_cvs()
+    shutil.rmtree("./data/uploaded_cvs", ignore_errors=True)
+    os.makedirs("./data/uploaded_cvs", exist_ok=True)
+    os.chmod("./data/uploaded_cvs", 0o777)

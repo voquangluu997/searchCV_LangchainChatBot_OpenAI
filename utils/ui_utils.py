@@ -1,9 +1,8 @@
 import chainlit as cl
 from typing import List
-from utils.file_utils import get_uploaded_cvs  # Chỉ import hàm cần thiết
+from utils.file_utils import get_uploaded_cvs 
 
 async def display_cv_list():
-    """Hiển thị danh sách CV dưới dạng message"""
     cv_list = get_uploaded_cvs()
     
     if cv_list:
@@ -38,19 +37,21 @@ def create_management_actions(cv_list: List[str]) -> List[cl.Action]:
                 type="button",
                 confirm=True,
                 confirm_text="Are you sure you want to delete ALL CVs?",
-                payload = {"value" : "delete_all_cvs"}
+            payload={"action": "delete_all"} 
             )
         )
         
         for cv in cv_list:
             actions.append(
                 cl.Action(
-                    name=f"delete_{cv}",
+                    name="delete_single_cv",
                     value=cv,
                     label=f"❌ Delete {cv}",
                     description=f"Remove this CV",
                     type="button",
-                    payload = {"value" : "delete_{cv}}"}
+                    confirm=True,
+                    confirm_text=f"Are you sure you want to delete {cv}?",
+                    payload={"action": "delete_single", "filename": cv} 
 
                 )
             )
@@ -60,10 +61,10 @@ def create_management_actions(cv_list: List[str]) -> List[cl.Action]:
 async def show_file_upload_ui() -> List[cl.File]:
     """Hiển thị UI upload file và trả về danh sách file"""
     files = await cl.AskFileMessage(
-        content="Upload CV PDFs (max 10 files)",
+        content="Upload CV PDFs (max 100 files)",
         accept=["application/pdf"],
-        max_files=10,
-        max_size_mb=50,
-        timeout=300
+        max_files=100,
+        max_size_mb=100,
+        timeout=600
     ).send()
     return files if files else []
