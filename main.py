@@ -9,7 +9,7 @@ from utils.file_utils import (
 from utils.ui_utils import (
     display_cv_list
 )
-from utils.chain_utils import initialize_chains, is_cv_related_question, rebuild_cv_chain
+from utils.chain_utils import initialize_chains, is_cv_related_question, initialize_chains
 
 load_dotenv()
 
@@ -32,12 +32,10 @@ async def handle_message(message: cl.Message):
         await display_cv_list()
         return
     
-    # Lấy các chain từ session
     cv_chain = cl.user_session.get("cv_chain")
     chat_chain = cl.user_session.get("chat_chain")
     has_cvs = cl.user_session.get("has_cvs", False)
     
-    # Kiểm tra chain có tồn tại không
     if chat_chain is None:
         await cl.Message(content="⚠️ Chat system is not ready yet. Please try again later.").send()
         return
@@ -50,8 +48,14 @@ async def handle_message(message: cl.Message):
                 callbacks=[cl.AsyncLangchainCallbackHandler()]
             )
             answer = res["result"]
-            sources = {os.path.basename(doc.metadata["source"]) for doc in res["source_documents"]}
-            response = f"📄 CV Analysis:\n{answer}\n\n🔍 Sources:\n" + "\n".join(f"- {s}" for s in sources)
+            source_docs = res["source_documents"]
+            unique_sources = set()
+            for doc in source_docs:
+                if "source" in doc.metadata:
+                    # Chỉ lấy tên file gốc, bỏ qua số trang chunk
+                    source_file = os.path.basename(doc.metadata["source"])
+                    unique_sources.add(source_file)
+            response = f"📄 CV Analysis:\n{answer}\n\n🔍 Matched CVs: {len(unique_sources)}\n" + "\n".join(f"- {s}" for s in sorted(unique_sources))
         else: 
             if not has_cvs and is_cv_related_question(user_input):
                 response = "\n\n⚠️ Note: No CVs uploaded yet. Please upload CVs for detailed analysis."
@@ -75,27 +79,19 @@ async def on_upload(action: cl.Action):
             accept=["application/pdf"],
             max_files=10,
             max_size_mb=50,
-            timeout=60
+            timeout=300
         ).send()
 
         if not files:
             await cl.Message(content="No files were uploaded").send()
             return
-
         success = await process_uploaded_files(files)
         if success:
-            await rebuild_cv_chain()
+            await initialize_chains()
             await display_cv_list()
             await cl.Message(content="✅ CVs uploaded successfully!").send()
-        return
     except Exception as e:
         await cl.Message(content=f"❌ Upload failed: {str(e)}").send()
-    finally:
-        if 'files' in locals():
-            for f in files:
-                if hasattr(f, 'close'):
-                    await f.close()
-
 
 @cl.action_callback("delete_single_cv")
 @cl.action_callback("delete_all_cvs")
@@ -116,7 +112,7 @@ async def on_delete(action: cl.Action):
         else:
             raise ValueError("Unknown delete action")
 
-        await rebuild_cv_chain()
+        await initialize_chains()
         await display_cv_list()
     except Exception as e:
         await cl.Message(content=f"❌ Error deleting CV: {str(e)}").send()

@@ -21,8 +21,6 @@ def get_file_hash(file_path: str) -> str:
         return hashlib.md5(f.read()).hexdigest()
 
 async def process_uploaded_files(files: List[cl.File]) -> bool:
-    if len(files) == 0: 
-        return False
     """Xử lý và lưu trữ CV"""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=OPTIMAL_CHUNK_SIZE,
@@ -66,55 +64,59 @@ async def process_uploaded_files(files: List[cl.File]) -> bool:
                 await cl.Message(content=f"❌ Error processing {file.name}: {str(e)}").send()
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
-                continue
+                return False
 
         if not all_docs:
             await cl.Message(content="No valid CVs were processed!").send()
             return False
-        return True
         
     finally:
-        # clean temp file
         for temp_path in temp_files:
             try:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
             except:
                 pass
+    return True
+        
 
 async def delete_cv_file(filename: str):
     """Xóa một CV cụ thể"""
-    filepath = f"./data/uploaded_cvs/{filename}"
+    filepath = f"{CV_UPLOAD_DIR}/{filename}"
     if os.path.exists(filepath):
         os.remove(filepath)
+    else:
+        await cl.Message(content=f"❌ File '{filename}' not found.").send()
     
     # Xóa và tạo lại vector store với các file còn lại
     await rebuild_vector_store()
 
 async def rebuild_vector_store():
-    os.makedirs("./data/uploaded_cvs", exist_ok=True)
+    await clear_all_vector_db()
+    os.makedirs(CV_UPLOAD_DIR, exist_ok=True)
     os.makedirs(CV_VECTOR_DB_DIR, exist_ok=True)
-    os.chmod("./data/uploaded_cvs", 0o777)
-    os.chmod(CV_VECTOR_DB_DIR, 0o777)
     cv_list = get_uploaded_cvs()
     try:
         if not cv_list:
             return None
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=OPTIMAL_CHUNK_SIZE,
-            chunk_overlap=CHUNK_OVERLAP
+            chunk_overlap=CHUNK_OVERLAP,
+            add_start_index=True
         )
         all_docs = []
         for cv in cv_list:
-            loader = PyPDFLoader(f"./data/uploaded_cvs/{cv}")
+            loader = PyPDFLoader(f"{CV_UPLOAD_DIR}/{cv}")
             pages = loader.load_and_split(text_splitter)
             for page in pages:
                 page.metadata.update({
                     "source": cv,
-                    "page": page.metadata.get("page", 0) + 1
+                    "page": page.metadata.get("page", 0) + 1,
+                    "original_file": cv
                 })
             all_docs.extend(pages)
         embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    
         vectorstore = Chroma.from_documents(
             documents=all_docs,
             embedding=embeddings
@@ -126,20 +128,19 @@ async def rebuild_vector_store():
         return None
 
 def get_uploaded_cvs() -> List[str]:
-    """Lấy danh sách CV đã upload"""
-    if os.path.exists("./data/uploaded_cvs"):
-        return sorted([f for f in os.listdir("./data/uploaded_cvs") if f.lower().endswith(".pdf")])
+    if os.path.exists(CV_UPLOAD_DIR):
+        return sorted([f for f in os.listdir(CV_UPLOAD_DIR) if f.lower().endswith(".pdf")])
     return []
 
-async def clear_all_cvs():
+async def clear_all_vector_db():
     """Xóa toàn bộ CV"""
-    shutil.rmtree("./data/cvs", ignore_errors=True)
-    os.makedirs("./data/cvs", exist_ok=True)
-    os.chmod("./data/cvs", 0o777)
+    shutil.rmtree(CV_VECTOR_DB_DIR, ignore_errors=True)
+    os.makedirs(CV_VECTOR_DB_DIR, exist_ok=True)
+    os.chmod(CV_VECTOR_DB_DIR, 0o777)
 
 async def clear_all_data():
     """Xóa toàn bộ CV"""
-    await clear_all_cvs()
-    shutil.rmtree("./data/uploaded_cvs", ignore_errors=True)
-    os.makedirs("./data/uploaded_cvs", exist_ok=True)
-    os.chmod("./data/uploaded_cvs", 0o777)
+    await clear_all_vector_db()
+    shutil.rmtree(CV_UPLOAD_DIR, ignore_errors=True)
+    os.makedirs(CV_UPLOAD_DIR, exist_ok=True)
+    os.chmod(CV_UPLOAD_DIR, 0o777)
