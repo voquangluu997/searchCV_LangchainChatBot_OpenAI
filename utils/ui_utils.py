@@ -1,21 +1,55 @@
 import chainlit as cl
 from typing import List
 from utils.file_utils import get_uploaded_cvs 
+import os
 
 async def display_cv_list():
+
     cv_list = get_uploaded_cvs()
-    
     if cv_list:
-        content = "📂 **Current CVs:**\n" + "\n".join(f"- {cv}" for cv in cv_list)
+        content = "📂 **Current CVs:**"
     else:
         content = "📂 No CVs uploaded yet"
     
-    actions = create_management_actions(cv_list)
-    await cl.Message(content=content, actions=actions).send()
+    actions = await create_management_actions(cv_list)
+    await cl.Message(
+        content=content,
+        actions=actions
+    ).send()
 
-def create_management_actions(cv_list: List[str]) -> List[cl.Action]:
-    """Tạo các action buttons quản lý CV"""
-    actions = [
+async def create_management_actions(cv_list: List[str]) -> List[cl.Action]:
+    actions = []
+    if cv_list:
+        for cv in cv_list:
+            file_path = f"./data/uploaded_cvs/{cv}"
+            if os.path.exists(file_path):
+                actions.append(
+                    cl.Action(
+                        name=f"open_cv",
+                        label=cv,
+                        path=file_path,
+                        value=cv,
+                        icon = "file-text",
+                        tooltip = "open",
+                        payload={"action": "open_cv", "filename": cv},
+                    )
+                )
+            actions.append(
+                cl.Action(
+                    name="delete_single_cv",
+                    value=cv,
+                    label="×",
+                    description=f"Delete {cv}",
+                    type="button",
+                    confirm=True,
+                    confirm_text=f"Are you sure you want to delete {cv}?",
+                    payload={"action": "delete_single", "filename": cv},
+                    style="danger",
+                    size="xs"
+                )                
+            )
+
+    actions.append(
         cl.Action(
             name="upload_cv",
             value="upload",
@@ -25,8 +59,8 @@ def create_management_actions(cv_list: List[str]) -> List[cl.Action]:
             payload = {"value" : "upload_cv"}
 
         )
-    ]
-    
+    )
+
     if cv_list:
         actions.append(
             cl.Action(
@@ -40,21 +74,6 @@ def create_management_actions(cv_list: List[str]) -> List[cl.Action]:
             payload={"action": "delete_all"} 
             )
         )
-        
-        for cv in cv_list:
-            actions.append(
-                cl.Action(
-                    name="delete_single_cv",
-                    value=cv,
-                    label=f"❌ Delete {cv}",
-                    description=f"Remove this CV",
-                    type="button",
-                    confirm=True,
-                    confirm_text=f"Are you sure you want to delete {cv}?",
-                    payload={"action": "delete_single", "filename": cv} 
-
-                )
-            )
     
     return actions
 

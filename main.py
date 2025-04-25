@@ -17,6 +17,8 @@ load_dotenv()
 os.makedirs("./data/uploaded_cvs", exist_ok=True)
 os.makedirs("./data/cvs", exist_ok=True)
 
+
+
 @cl.on_chat_start
 async def start_chat():
     await display_cv_list()
@@ -28,17 +30,13 @@ async def handle_message(message: cl.Message):
     user_input = message.content
     
     # Kiểm tra nếu là lệnh quản lý CV
-    if user_input.lower() in ["refresh", "reload"]:
+    if user_input.lower() in ["refresh", "reload", "cv", "manager cv"]:
         await display_cv_list()
         return
     
     cv_chain = cl.user_session.get("cv_chain")
     chat_chain = cl.user_session.get("chat_chain")
     has_cvs = cl.user_session.get("has_cvs", False)
-    
-    if chat_chain is None:
-        await cl.Message(content="⚠️ Chat system is not ready yet. Please try again later.").send()
-        return
     
     try:
         if has_cvs and cv_chain is not None and is_cv_related_question(user_input):
@@ -47,26 +45,22 @@ async def handle_message(message: cl.Message):
                 {"query": user_input},
                 callbacks=[cl.AsyncLangchainCallbackHandler()]
             )
+            
             answer = res["result"]
-            source_docs = res["source_documents"]
-            unique_sources = set()
-            for doc in source_docs:
-                if "source" in doc.metadata:
-                    # Chỉ lấy tên file gốc, bỏ qua số trang chunk
-                    source_file = os.path.basename(doc.metadata["source"])
-                    unique_sources.add(source_file)
-            response = f"📄 CV Analysis:\n{answer}\n\n🔍 Matched CVs: {len(unique_sources)}\n" + "\n".join(f"- {s}" for s in sorted(unique_sources))
-        else: 
-            if not has_cvs and is_cv_related_question(user_input):
-                response = "\n\n⚠️ Note: No CVs uploaded yet. Please upload CVs for detailed analysis."
-            else:
-                res = await chat_chain.ainvoke(
+            sources = {os.path.basename(doc.metadata["source"]) for doc in res["source_documents"]}
+            response = f"📄 CV Analysis:\n{answer}\n\n🔍 Sources:\n" + "\n".join(f"- {s}" for s in sources)
+        else:
+            # Xử lý chat thông thường
+            res = await chat_chain.ainvoke(
                 {"input": user_input},
                 callbacks=[cl.AsyncLangchainCallbackHandler()]
-                )
-                response = f"💬 {res['response']}"
+            )
+            response = f"💬 {res['response']}"
+        
+        if not has_cvs and is_cv_related_question(user_input):
+            response += "\n\n⚠️ Note: No CVs uploaded yet. Please upload CVs for detailed analysis."
+        
         await cl.Message(content=response).send()
-        return
     
     except Exception as e:
         await cl.Message(content=f"⚠️ Error: {str(e)}").send()
@@ -77,8 +71,8 @@ async def on_upload(action: cl.Action):
         files = await cl.AskFileMessage(
             content="Please upload CV PDFs",
             accept=["application/pdf"],
-            max_files=10,
-            max_size_mb=50,
+            max_files=50,
+            max_size_mb=100,
             timeout=300
         ).send()
 
@@ -92,6 +86,20 @@ async def on_upload(action: cl.Action):
             await cl.Message(content="✅ CVs uploaded successfully!").send()
     except Exception as e:
         await cl.Message(content=f"❌ Upload failed: {str(e)}").send()
+
+# @cl.action_callback("delete_single_cv")
+# async def on_delete_single_cv(action: cl.Action):
+#     try:
+#         cv_name = action.payload.get("filename")
+#         if not cv_name:
+#             raise ValueError("Filename not provided in payload")
+            
+#         await delete_cv_file(cv_name)
+#         await cl.Message(content=f"🗑️ CV '{cv_name}' deleted").send()
+#         await initialize_chains()
+#         await display_cv_list()
+#     except Exception as e:
+#         await cl.Message(content=f"❌ Error deleting CV: {str(e)}").send()
 
 @cl.action_callback("delete_single_cv")
 @cl.action_callback("delete_all_cvs")
@@ -117,6 +125,21 @@ async def on_delete(action: cl.Action):
     except Exception as e:
         await cl.Message(content=f"❌ Error deleting CV: {str(e)}").send()
 
+@cl.action_callback("open_cv")
+async def on_open_cv(action: cl.Action):
+    try:
+        cv_name = action.payload.get("filename")
+        if not cv_name:
+            raise ValueError("Filename not provided in payload")
+        file_path = f"./data/uploaded_cvs/{cv_name}"
+        elements = [
+            cl.Pdf(name=cv_name, content = cv_name, display="page", path=file_path)
+        ]
+        await cl.Message(content = f"View {cv_name}", elements = elements).send()
+    except Exception as e:
+        await cl.Message(content=f"❌ Error deleting CV: {str(e)}").send()
+
 if __name__ == "__main__":
     from chainlit.cli import run_chainlit
     run_chainlit("main.py")
+    

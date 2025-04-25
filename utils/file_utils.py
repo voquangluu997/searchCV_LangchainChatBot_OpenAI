@@ -128,6 +128,7 @@ async def rebuild_vector_store():
         return None
 
 def get_uploaded_cvs() -> List[str]:
+    os.makedirs(CV_UPLOAD_DIR, exist_ok=True)
     if os.path.exists(CV_UPLOAD_DIR):
         return sorted([f for f in os.listdir(CV_UPLOAD_DIR) if f.lower().endswith(".pdf")])
     return []

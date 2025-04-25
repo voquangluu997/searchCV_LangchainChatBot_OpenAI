@@ -4,55 +4,73 @@ from langchain_openai import ChatOpenAI
 from langchain_huggingface import HuggingFaceEmbeddings
 from utils.file_utils import get_uploaded_cvs, rebuild_vector_store
 import chainlit as cl
-import traceback
 
 async def create_prompt_templates():
     
     cv_prompt = PromptTemplate(
     input_variables=["context", "question"],
     template="""[INST] <<SYS>>
-    You are an advanced AI HR assistant with deep expertise in CV analysis. Your task is to:
-    
-    **Core Principles:**
-    1. Provide accurate, truthful responses based ONLY on provided CV data
-    2. Adapt your response style to the question type:
-       - For factual queries: Be concise and direct
-       - For analytical questions: Provide insights with supporting evidence
-       - For comparison requests: Use clear comparative frameworks
-    3. Always maintain professional HR tone
-    4. Structure complex answers logically
-    
-    **Response Guidelines:**
-    - For skill/experience questions: 
-      ✓ Include years of experience 
-      ✓ Mention proficiency level if evident
-      ✓ Reference specific CV sources
-    - For match analysis:
-      ✓ List matching qualifications first
-      ✓ Note any missing requirements
-    - For open-ended questions:
-      ✓ Provide structured insights
-      ✓ Suggest follow-up considerations
-    
-    **Formatting Rules:**
-    - Use bullet points for lists
-    - Bold important keywords
-    - Separate sections clearly
-    - Include exact source  references 1 time in the end, like: [Source: John_Doe_CV.pdf]
-    
-    **Prohibitions:**
-    × Never hallucinate information
-    × Avoid generic template responses
-    × Don't make assumptions beyond CV data
-    <</SYS>>
+        You are an AI HR expert specialized in comprehensive candidate matching. Follow these rules:
 
-    Context: {context}
-    Question: {question} 
+        **Analysis Protocol:**
+        1. FIRST show total matches: "🎯 [X perfect matches found]"
+        2. For EACH perfect match:
+        • Name/ID
+        ✓ Matching skills (years)
+        ✧ Notable achievements
+        ⚠️ Missing requirements (if any)
+        3. For partial matches (60-90% fit):
+        ➤ Suggest "Near Matches" section
+        • Name/ID
+        ✓ Matching skills (years)
+        ✘ Missing key requirements
+        ✦ Potential compensations
+        4. Always include:
+        📌 Source references (once per candidate)
+        💡 Hiring recommendations
 
-    Provide the most helpful response possible while strictly following all above guidelines.
-    [/INST]"""
+        **Dynamic Formatting:**
+        - Perfect matches: Green bullet points (✓)
+        - Near matches: Yellow bullet points (➤)
+        - Critical missing: Red warning (⚠️)
+        - Group by match level then sort by relevance
+
+        **Example Output Structure:**
+        🎯 [3 perfect matches]
+        • Anna Nguyen
+        ✓ Python: 5 years (Advanced)
+        ✓ AWS: 3 years (Certified)
+        ✧ Led cloud migration project
+        [Ref: ANguyen_CV.pdf]
+
+        ➤ [2 near matches] 
+        • Bob Tran
+        ✓ Python: 4 years
+        ✘ Missing AWS certification
+        ✦ Strong Docker experience
+        [Ref: BTran_CV.pdf]
+
+        **Special Cases Handling:**
+        1. For >10 matches:
+        - Show top 5 most relevant
+        - Add "View more" option
+        2. For rare skills:
+        - Highlight as "Top Talent"
+        3. For borderline cases:
+        - Add "Consider for:" suggestions
+
+        **Prohibitions:**
+        × No duplicate information
+        × No unverified claims
+        × No more than 10 items raw output
+        <</SYS>>
+
+        Context: {context}
+        Question: {question}
+
+        Generate COMPLETE candidate analysis with smart suggestions.
+        [/INST]"""
     )
-    
     chat_prompt = PromptTemplate(
         input_variables=["history", "input"],
         template="""[INST] <<SYS>>
@@ -67,39 +85,38 @@ async def create_prompt_templates():
 
 async def initialize_chains():
     try:
-        # init LLM
+        # Khởi tạo LLM
         llm = ChatOpenAI(
             openai_api_base="https://api.llm7.io/v1",
             openai_api_key="unused",
             model_name="mistral-small-2503",
             max_tokens=1024,
-            temperature=0.3,
-            request_timeout=30
+            temperature=0.3
         )
-        cv_prompt, chat_prompt = await create_prompt_templates()
+        
+        cv_prompt, chat_prompt =await create_prompt_templates()
+        
+        # Luôn khởi tạo chat_chain
         chat_chain = ConversationChain(llm=llm, prompt=chat_prompt)
         cl.user_session.set("chat_chain", chat_chain)
-    
+
         # Chỉ khởi tạo cv_chain nếu có CV
         cv_list = get_uploaded_cvs()
         if cv_list:
             vectorstore = await rebuild_vector_store()
+            
             if vectorstore is not None:
                 cv_chain = RetrievalQA.from_chain_type(
                     llm=llm,
                     chain_type="stuff",
-                    retriever=vectorstore.as_retriever(
-                    search_kwargs={
-                        "k": min(20, len(cv_list) if cv_list else 5)
-                    }
-                ),
+                    retriever=vectorstore.as_retriever(search_kwargs={"k": len(cv_list)}),
                     chain_type_kwargs={"prompt": cv_prompt},
                     return_source_documents=True
                 )
                 cl.user_session.set("cv_chain", cv_chain)
                 cl.user_session.set("has_cvs", True)
             else:
-                await cl.Message(content="⚠️ Failed to rebuild vector store.").send()
+                await cl.Message(content="⚠️ Failed to initialize CV analysis system. Please try uploading CVs again.").send()
                 cl.user_session.set("cv_chain", None)
                 cl.user_session.set("has_cvs", False)
         else:
